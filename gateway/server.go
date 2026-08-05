@@ -46,6 +46,7 @@ func (s *Server) Routes() http.Handler {
 	memux := http.NewServeMux()
 	memux.HandleFunc("/api/v1/memory/ingest", s.auth(s.handleIngest))
 	memux.HandleFunc("/api/v1/memory/recall", s.auth(s.handleRecall))
+	memux.HandleFunc("/api/v1/memory/index", s.auth(s.handleMemoryIndex))
 	memux.HandleFunc("/api/v1/memory/nodes", s.auth(s.handleNodes))
 	mux.Handle("/api/v1/memory/", memux)
 

@@ -10,6 +10,7 @@ package hub
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/damonlinyz/brain/memory/embedder"
@@ -398,6 +399,19 @@ func (h *Hub) mergeInto(ctx context.Context, existing types.MemoryNode, fact bui
 	})
 }
 
+// extractKeywords splits a query into simple keyword tokens.
+func extractKeywords(query string) []string {
+	words := strings.Fields(query)
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		w = strings.Trim(w, ",.;:!?'\"()[]{}")
+		if len([]rune(w)) >= 2 {
+			out = append(out, strings.ToLower(w))
+		}
+	}
+	return out
+}
+
 func (h *Hub) embed(ctx context.Context, content string) ([]float32, error) {
 	if h.embedder == nil {
 		return nil, ErrNotConfigured
@@ -442,6 +456,15 @@ func (h *Hub) Recall(ctx context.Context, in RecallInput) (types.CompressedConte
 	})
 	if err != nil {
 		return empty, err
+	}
+
+	// Deterministic fallback: if vector recall returns nothing, try keywords.
+	if len(results) == 0 && in.Query != "" {
+		kwResults, kwErr := h.store.SearchByKeywords(ctx, in.UserID, extractKeywords(in.Query), in.TopK)
+		if kwErr == nil && len(kwResults) > 0 {
+			results = kwResults
+			h.logger.Debug("v2 recall: vector empty, fell back to keywords", "hits", len(results))
+		}
 	}
 
 	candidates := make([]types.TriggerCandidate, 0, len(results))

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -51,6 +52,38 @@ func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(cc)
+}
+
+func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
+	results, err := s.hub.ListNodes(r.Context(), store.SearchFilter{UserID: s.ownerID(), Limit: 200})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	var sb strings.Builder
+	sb.WriteString("# Memory Index\n\n")
+	for _, n := range results.Items {
+		kind := string(n.ContentType)
+		if n.Type != "" { kind = string(n.Type) + "/" + kind }
+		state := string(n.State)
+		sb.WriteString(fmt.Sprintf("- **%s** `[%s]` %s — %s\n",
+			trunc60(n.Summary), kind, state, shortTag(n)))
+	}
+	w.Write([]byte(sb.String()))
+}
+
+func trunc60(s string) string {
+	r := []rune(s)
+	if len(r) <= 60 { return s }
+	return string(r[:57]) + "..."
+}
+
+func shortTag(n types.MemoryNode) string {
+	if n.Weight < 0.1 { return "⚰️ extinct" }
+	if n.State == types.NodeStateSuppressed { return "🟡 suppressed" }
+	if n.Confidence > 0.6 { return "🟢 confident" }
+	return ""
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
