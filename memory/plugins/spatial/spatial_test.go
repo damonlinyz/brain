@@ -39,6 +39,9 @@ func (m *mini) BulkUpdateWeight(context.Context, uuid.UUID, []store.WeightUpdate
 func (m *mini) FindUnconnectedSimilarPairs(context.Context, uuid.UUID, float64, int) ([]store.SimilarPair, error) { return nil, nil }
 func (m *mini) ListMemoryUserIDs(context.Context) ([]uuid.UUID, error) { return nil, nil }
 func (m *mini) RecordHistory(context.Context, types.MemoryNodeHistory) error { return nil }
+func (m *mini) GetGraphNeighbors(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *mini) FindPath(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *mini) ExpandSubgraph(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
 func (m *mini) WithTx(context.Context) (store.IMemoryStore, error) { return m, nil }
 func (m *mini) CommitTx(context.Context) error { return nil }
 func (m *mini) RollbackTx(context.Context) error { return nil }

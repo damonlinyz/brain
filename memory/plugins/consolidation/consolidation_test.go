@@ -77,6 +77,9 @@ func (f *fakeStore) BulkUpdateWeight(context.Context, uuid.UUID, []store.WeightU
 func (f *fakeStore) ListMemoryUserIDs(context.Context) ([]uuid.UUID, error) {
 	return nil, nil
 }
+func (f *fakeStore) GetGraphNeighbors(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (f *fakeStore) FindPath(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (f *fakeStore) ExpandSubgraph(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
 func (f *fakeStore) WithTx(context.Context) (store.IMemoryStore, error) { return f, nil }
 func (f *fakeStore) CommitTx(context.Context) error                    { return nil }
 func (f *fakeStore) RollbackTx(context.Context) error                  { return nil }

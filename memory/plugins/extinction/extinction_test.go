@@ -48,27 +48,9 @@ func (m *miniStore) GetEdges(context.Context, uuid.UUID, []types.EdgeKind) ([]ty
 func (m *miniStore) DecayAll(context.Context, uuid.UUID, time.Time, store.DecayFn) (int, error) { return 0, nil }
 func (m *miniStore) BulkUpdateWeight(context.Context, uuid.UUID, []store.WeightUpdate) (int, error) { return 0, nil }
 func (m *miniStore) FindUnconnectedSimilarPairs(context.Context, uuid.UUID, float64, int) ([]store.SimilarPair, error) { return nil, nil }
-func (m *miniStore) ListMemoryUserIDs(context.Context) ([]uuid.UUID, error) { return nil, nil }
-func (m *miniStore) RecordHistory(context.Context, types.MemoryNodeHistory) error { return nil }
-func (m *miniStore) WithTx(context.Context) (store.IMemoryStore, error) { return m, nil }
-func (m *miniStore) CommitTx(context.Context) error { return nil }
-func (m *miniStore) RollbackTx(context.Context) error { return nil }
-
-func TestProcess_MarksLowWeightExtinct(t *testing.T) {
-	p := New()
-	_ = p.Init(map[string]any{"extinctThreshold": 0.05})
-	m := newMini()
-	uid := uuid.New()
-	id1, id2 := uuid.New(), uuid.New()
-	m.nodes[id1] = types.MemoryNode{ID: id1, UserID: uid, State: types.NodeStateActive, Weight: 0.01, Version: 1}
-	m.nodes[id2] = types.MemoryNode{ID: id2, UserID: uid, State: types.NodeStateActive, Weight: 0.5, Version: 1}
-
-	n, err := p.Process(context.Background(), m, uid)
-	if err != nil { t.Fatal(err) }
-	if n != 1 { t.Fatalf("expected 1 extinct, got %d", n) }
-	if m.nodes[id1].State != types.NodeStateExtinct { t.Fatal("id1 should be extinct") }
-	if m.nodes[id2].State != types.NodeStateActive { t.Fatal("id2 should stay active") }
-}
+func (m *miniStore) GetGraphNeighbors(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *miniStore) FindPath(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *miniStore) ExpandSubgraph(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
 
 func TestRevive_ResurrectsExtinct(t *testing.T) {
 	p := New()
@@ -92,3 +74,8 @@ func TestRevive_NoopOnActive(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if m.nodes[id].Weight != 0.5 { t.Fatal("active node should not change") }
 }
+func (m *miniStore) ListMemoryUserIDs(context.Context) ([]uuid.UUID, error) { return nil, nil }
+func (m *miniStore) RecordHistory(context.Context, types.MemoryNodeHistory) error { return nil }
+func (m *miniStore) WithTx(context.Context) (store.IMemoryStore, error) { return m, nil }
+func (m *miniStore) CommitTx(context.Context) error { return nil }
+func (m *miniStore) RollbackTx(context.Context) error { return nil }

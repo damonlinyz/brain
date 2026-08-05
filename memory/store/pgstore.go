@@ -602,6 +602,121 @@ func (s *PGStore) ListMemoryUserIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return out, rows.Err()
 }
 
+// --- Graph methods (same SQL as PGraphStore, executor()-aware for tx support) ---
+
+func (s *PGStore) GetGraphNeighbors(ctx context.Context, userID uuid.UUID, seedIDs []uuid.UUID, depth int) ([]GraphNeighbor, error) {
+	if depth < 1 { depth = 1 }
+	if len(seedIDs) == 0 { return nil, nil }
+	rows, err := s.executor().Query(ctx, `
+        WITH RECURSIVE graph_walk AS (
+            SELECT e.from_node_id AS src, e.to_node_id AS dst, e.id AS edge_id,
+                   e.edge_type, e.weight, e.discovered_by, 1 AS depth
+              FROM memory_edges e
+             WHERE e.user_id = $1 AND e.deleted_at IS NULL
+               AND (e.from_node_id = ANY($2) OR e.to_node_id = ANY($2))
+             UNION
+            SELECT e.from_node_id, e.to_node_id, e.id, e.edge_type, e.weight, e.discovered_by, g.depth + 1
+              FROM memory_edges e
+              JOIN graph_walk g ON (e.from_node_id = g.dst OR e.to_node_id = g.dst)
+             WHERE e.user_id = $1 AND e.deleted_at IS NULL AND g.depth < $3
+        )
+        SELECT DISTINCT ON (n.id, gw.edge_id) n.id, n.content, n.summary, n.keywords, n.type, n.weight, n.state,
+               gw.edge_id, gw.edge_type, gw.weight, gw.discovered_by, gw.depth
+          FROM graph_walk gw
+          JOIN memory_node_meta n ON n.id IN (gw.src, gw.dst) AND n.deleted_at IS NULL
+         WHERE n.id != ALL($2)
+         ORDER BY n.id, gw.edge_id`, userID, seedIDs, depth)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var out []GraphNeighbor
+	for rows.Next() {
+		var gn GraphNeighbor
+		var et, db string
+		if err := rows.Scan(&gn.Node.ID, &gn.Node.Content, &gn.Node.Summary, &gn.Node.Keywords,
+			&gn.Node.Type, &gn.Node.Weight, &gn.Node.State, &gn.Edge.ID, &et, &gn.Edge.Weight, &db, &gn.Depth); err != nil {
+			return nil, err
+		}
+		gn.Edge.EdgeType = types.EdgeKind(et)
+		gn.Edge.DiscoveredBy = types.EdgeDiscoverer(db)
+		out = append(out, gn)
+	}
+	return out, rows.Err()
+}
+
+func (s *PGStore) FindPath(ctx context.Context, userID uuid.UUID, from, to uuid.UUID, maxDepth int) ([]GraphNeighbor, error) {
+	if maxDepth < 1 { maxDepth = 5 }
+	rows, err := s.executor().Query(ctx, `
+        WITH RECURSIVE walk AS (
+            SELECT from_node_id AS src, to_node_id AS dst, id AS edge_id,
+                   edge_type, weight, discovered_by, 1 AS depth, ARRAY[id] AS path_edges
+              FROM memory_edges WHERE user_id = $1 AND deleted_at IS NULL
+               AND (from_node_id = $2 OR to_node_id = $2)
+             UNION
+            SELECT e.from_node_id, e.to_node_id, e.id, e.edge_type, e.weight, e.discovered_by,
+                   w.depth + 1, w.path_edges || e.id
+              FROM memory_edges e
+              JOIN walk w ON (e.from_node_id = w.dst OR e.to_node_id = w.dst) AND e.id <> ALL(w.path_edges)
+             WHERE e.user_id = $1 AND e.deleted_at IS NULL AND w.depth < $4
+        )
+        SELECT n.id, n.content, n.summary, n.keywords, n.type, n.weight, n.state,
+               w.edge_id, w.edge_type, w.weight, w.discovered_by, w.depth
+          FROM walk w JOIN memory_node_meta n ON n.id = w.dst AND n.deleted_at IS NULL
+         WHERE w.dst = $3 ORDER BY w.depth LIMIT 1`, userID, from, to, maxDepth)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return scanGraphNeighbors(rows)
+}
+
+func (s *PGStore) ExpandSubgraph(ctx context.Context, userID uuid.UUID, seedIDs []uuid.UUID, depth int) ([]GraphNeighbor, error) {
+	if depth < 1 { depth = 1 }
+	if len(seedIDs) == 0 { return nil, nil }
+	rows, err := s.executor().Query(ctx, `
+        WITH RECURSIVE graph_walk AS (
+            SELECT from_node_id AS src, to_node_id AS dst, id AS edge_id,
+                   edge_type, weight, discovered_by, 1 AS depth
+              FROM memory_edges WHERE user_id = $1 AND deleted_at IS NULL
+               AND (from_node_id = ANY($2) OR to_node_id = ANY($2))
+             UNION
+            SELECT e.from_node_id, e.to_node_id, e.id, e.edge_type, e.weight, e.discovered_by, g.depth + 1
+              FROM memory_edges e
+              JOIN graph_walk g ON (e.from_node_id = g.dst OR e.to_node_id = g.dst)
+             WHERE e.user_id = $1 AND e.deleted_at IS NULL AND g.depth < $3
+        )
+        SELECT n.id, n.content, n.summary, n.keywords, n.type, n.weight, n.state,
+               '00000000-0000-0000-0000-000000000000'::uuid, ''::text, 0::float8, ''::text, 0
+          FROM memory_node_meta n WHERE n.id = ANY($2) AND n.user_id = $1 AND n.deleted_at IS NULL
+         UNION ALL
+        SELECT n.id, n.content, n.summary, n.keywords, n.type, n.weight, n.state,
+               gw.edge_id, gw.edge_type, gw.weight, gw.discovered_by, gw.depth
+          FROM graph_walk gw
+          JOIN memory_node_meta n ON n.id IN (gw.src, gw.dst) AND n.deleted_at IS NULL
+         WHERE n.id != ALL($2) ORDER BY depth`, userID, seedIDs, depth)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return scanGraphNeighbors(rows)
+}
+
+// scanGraphNeighbors is shared by PGStore + PGraphStore.
+func scanGraphNeighbors(rows pgxRows) ([]GraphNeighbor, error) { return scanGraphNeighborRows(rows) }
+
+type pgxRows = pgx.Rows // avoids import cycle — pgx is already imported
+
+func scanGraphNeighborRows(rows pgx.Rows) ([]GraphNeighbor, error) {
+	var out []GraphNeighbor
+	for rows.Next() {
+		var gn GraphNeighbor
+		var et, db string
+		if err := rows.Scan(&gn.Node.ID, &gn.Node.Content, &gn.Node.Summary, &gn.Node.Keywords,
+			&gn.Node.Type, &gn.Node.Weight, &gn.Node.State, &gn.Edge.ID, &et, &gn.Edge.Weight, &db, &gn.Depth); err != nil {
+			return nil, err
+		}
+		gn.Edge.EdgeType = types.EdgeKind(et)
+		gn.Edge.DiscoveredBy = types.EdgeDiscoverer(db)
+		out = append(out, gn)
+	}
+	return out, rows.Err()
+}
+
 // --- Transactions ---
 
 func (s *PGStore) WithTx(ctx context.Context) (IMemoryStore, error) {

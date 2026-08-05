@@ -557,6 +557,30 @@ func (h *Hub) Recall(ctx context.Context, in RecallInput) (types.CompressedConte
 		}
 	}
 
+	// Graph neighbor expansion: for every surviving candidate, pull its
+	// 1-hop neighbors via memory_edges and add their summaries as extra
+	// "graph" candidates with a 0.8× base score. This enriches the recall
+	// set with graph-related memories that vector search missed.
+	if len(candidates) > 0 {
+		survivingIDs := make([]uuid.UUID, 0, len(candidates))
+		for _, c := range candidates {
+			id, _ := uuid.Parse(c.NodeID)
+			survivingIDs = append(survivingIDs, id)
+		}
+		neighbors, err := h.store.GetGraphNeighbors(ctx, in.UserID, survivingIDs, 1)
+		if err == nil && len(neighbors) > 0 {
+			for _, gn := range neighbors {
+				candidates = append(candidates, types.TriggerCandidate{
+					NodeID:  gn.Node.ID.String(),
+					Summary: gn.Node.Summary,
+					Score:   0.5 * gn.Edge.Weight, // graph relevance, damped
+					Source:  "graph",
+				})
+			}
+			h.logger.Debug("v2 recall: graph neighbors enriched", "neighbors", len(neighbors), "candidates", len(candidates))
+		}
+	}
+
 	cc := h.compressor.Compress(ctx, compressor.CompressInput{
 		Candidates:    candidates,
 		DesiredBudget: in.DesiredBudget,

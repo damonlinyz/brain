@@ -83,6 +83,9 @@ func (m *miniStore) ListMemoryUserIDs(context.Context) ([]uuid.UUID, error) { re
 func (m *miniStore) WithTx(context.Context) (store.IMemoryStore, error)     { return m, nil }
 func (m *miniStore) CommitTx(context.Context) error                         { return nil }
 func (m *miniStore) RollbackTx(context.Context) error                       { return nil }
+func (m *miniStore) GetGraphNeighbors(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *miniStore) FindPath(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (m *miniStore) ExpandSubgraph(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
 
 func seedNode(m *miniStore, id uuid.UUID, content string) types.MemoryNode {
 	n := types.MemoryNode{

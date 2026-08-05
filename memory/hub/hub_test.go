@@ -151,6 +151,9 @@ func (s *fakeStore) WithTx(context.Context) (store.IMemoryStore, error) { return
 func (s *fakeStore) CommitTx(context.Context) error                    { return nil }
 func (s *fakeStore) RollbackTx(context.Context) error                  { return nil }
 
+func (s *fakeStore) GetGraphNeighbors(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (s *fakeStore) FindPath(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
+func (s *fakeStore) ExpandSubgraph(context.Context, uuid.UUID, []uuid.UUID, int) ([]store.GraphNeighbor, error) { return nil, nil }
 // fakeEmbedder returns deterministic vectors.
 type fakeEmbedder struct {
 	dim int
