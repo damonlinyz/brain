@@ -66,6 +66,9 @@ func (s *PGStore) CreateNode(ctx context.Context, in types.CreateNodeInput) (typ
 	if in.Salience == "" {
 		in.Salience = types.SalienceNormal
 	}
+	if in.Tier == "" {
+		in.Tier = types.NodeTierNormal
+	}
 	if in.SourceTrust == 0 {
 		in.SourceTrust = 0.5
 	}
@@ -92,23 +95,24 @@ func (s *PGStore) CreateNode(ctx context.Context, in types.CreateNodeInput) (typ
         INSERT INTO memory_node_meta
           (user_id, tenant_id, session_id, content, summary, content_type, keywords,
            source, sources_json, type, salience, emotional_tone, state, weight, source_trust,
-           activity_context, scene_context)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', $13, $14, $15, $16)
+           activity_context, scene_context, tier)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', $13, $14, $15, $16, $17)
         RETURNING id, user_id, tenant_id, session_id, content, summary, content_type, keywords,
                   source, sources_json, type, salience, emotional_tone, state, weight, source_trust,
-                  access_count, last_access_at, created_at, updated_at, version, activity_context, scene_context`,
+                  access_count, last_access_at, created_at, updated_at, version, activity_context, scene_context, tier`,
 		in.UserID, in.TenantID, in.SessionID,
 		in.Content, in.Summary, string(in.ContentType), in.Keywords,
 		string(in.Source), sourcesJSON,
 		string(in.Type), string(in.Salience), in.EmotionalTone,
 		in.Weight, in.SourceTrust,
 		in.ActivityContext, in.SceneContext,
+		string(in.Tier),
 	).Scan(&id, &node.UserID, &node.TenantID, &node.SessionID,
 		&node.Content, &node.Summary, &node.ContentType, &node.Keywords,
 		&node.Source, &sourcesJSON, &node.Type, &node.Salience, &node.EmotionalTone,
 		&node.State, &node.Weight, &node.SourceTrust,
 		&node.AccessCount, &lastAccess, &node.CreatedAt, &node.UpdatedAt, &node.Version,
-		&activityCtx, &sceneCtx)
+		&activityCtx, &sceneCtx, &node.Tier)
 	if err != nil {
 		return types.MemoryNode{}, fmt.Errorf("insert memory_node_meta: %w", err)
 	}
@@ -181,7 +185,7 @@ func (s *PGStore) UpdateNode(ctx context.Context, nodeID uuid.UUID, expectedVers
                unstable_until = $19, cold_ref = $20,
                confidence = $21, consistency_score = $22,
                cumulative_reward = $23, emotion_valence = $24, emotion_arousal = $25,
-               updated_at = $26, version = version + 1
+               tier = $26, updated_at = $27, version = version + 1
          WHERE id = $1 AND version = $2 AND deleted_at IS NULL`,
 		nodeID, expectedVersion,
 		current.Content, current.Summary, string(current.ContentType), current.Keywords,
@@ -193,7 +197,7 @@ func (s *PGStore) UpdateNode(ctx context.Context, nodeID uuid.UUID, expectedVers
 		nullableTimePtr(current.UnstableUntil), nullableStr(current.ColdRef),
 		current.Confidence, current.ConsistencyScore,
 		current.CumulativeReward, current.EmotionValence, current.EmotionArousal,
-		current.UpdatedAt)
+		string(current.Tier), current.UpdatedAt)
 	if err != nil {
 		return types.MemoryNode{}, fmt.Errorf("update memory_node_meta: %w", err)
 	}
@@ -254,6 +258,10 @@ func (s *PGStore) ListNodes(ctx context.Context, f SearchFilter) (SearchResults,
 	if len(f.States) > 0 {
 		args = append(args, stateStrings(f.States))
 		where += fmt.Sprintf(" AND state = ANY($%d)", len(args))
+	}
+	if len(f.Tiers) > 0 {
+		args = append(args, tierStrings(f.Tiers))
+		where += fmt.Sprintf(" AND tier = ANY($%d)", len(args))
 	}
 	if f.SessionID != nil {
 		args = append(args, f.SessionID)
@@ -748,7 +756,7 @@ func (s *PGStore) RollbackTx(ctx context.Context) error {
 
 func nodeColumns() string {
 	return `id, user_id, tenant_id, session_id, content, summary, content_type, keywords,
-            source, sources_json, type, salience, emotional_tone, state, weight, source_trust,
+            source, sources_json, type, salience, emotional_tone, tier, state, weight, source_trust,
             access_count, last_access_at, created_at, updated_at, deleted_at, version,
             activity_context, scene_context, cumulative_reward, emotion_valence, emotion_arousal,
             confidence, consistency_score, unstable_until, cold_ref, dgraph_uid, dgraph_synced_at`
@@ -759,7 +767,7 @@ func nodeColumns() string {
 func nodeColumnsAliased(alias string) string {
 	cols := []string{"id", "user_id", "tenant_id", "session_id", "content", "summary",
 		"content_type", "keywords", "source", "sources_json", "type", "salience",
-		"emotional_tone", "state", "weight", "source_trust", "access_count", "last_access_at",
+		"emotional_tone", "tier", "state", "weight", "source_trust", "access_count", "last_access_at",
 		"created_at", "updated_at", "deleted_at", "version", "activity_context", "scene_context",
 		"cumulative_reward", "emotion_valence", "emotion_arousal", "confidence",
 		"consistency_score", "unstable_until", "cold_ref", "dgraph_uid", "dgraph_synced_at"}
@@ -783,7 +791,7 @@ func scanNode(scan scanFn) (types.MemoryNode, error) {
 	err := scan(
 		&n.ID, &n.UserID, &n.TenantID, &n.SessionID,
 		&n.Content, &n.Summary, &n.ContentType, &n.Keywords,
-		&n.Source, &sourcesJSON, &n.Type, &n.Salience, &n.EmotionalTone,
+		&n.Source, &sourcesJSON, &n.Type, &n.Salience, &n.EmotionalTone, &n.Tier,
 		&n.State, &n.Weight, &n.SourceTrust,
 		&n.AccessCount, &lastAccess, &n.CreatedAt, &n.UpdatedAt, &n.DeletedAt, &n.Version,
 		&activityCtx, &sceneCtx,
@@ -828,7 +836,7 @@ func scanNodeWithSim(scan scanFn) (types.MemoryNode, float64, error) {
 	err := scan(
 		&n.ID, &n.UserID, &n.TenantID, &n.SessionID,
 		&n.Content, &n.Summary, &n.ContentType, &n.Keywords,
-		&n.Source, &sourcesJSON, &n.Type, &n.Salience, &n.EmotionalTone,
+		&n.Source, &sourcesJSON, &n.Type, &n.Salience, &n.EmotionalTone, &n.Tier,
 		&n.State, &n.Weight, &n.SourceTrust,
 		&n.AccessCount, &lastAccess, &n.CreatedAt, &n.UpdatedAt, &n.DeletedAt, &n.Version,
 		&activityCtx, &sceneCtx,
@@ -897,6 +905,14 @@ func stateStrings(ss []types.NodeState) []string {
 	out := make([]string, len(ss))
 	for i, s := range ss {
 		out[i] = string(s)
+	}
+	return out
+}
+
+func tierStrings(ts []types.NodeTier) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = string(t)
 	}
 	return out
 }

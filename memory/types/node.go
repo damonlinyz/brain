@@ -35,6 +35,16 @@ const (
 	NodeStateExtinct    NodeState = "extinct"
 )
 
+// NodeTier marks whether a node is always injected (core) or recall-gated (normal).
+// Core-tier nodes bypass similarity scoring — they are foundational facts the
+// owner pinned as always-on context (like a personal CLAUDE.md).
+type NodeTier string
+
+const (
+	NodeTierNormal NodeTier = "normal"
+	NodeTierCore   NodeTier = "core"
+)
+
 // ContentType describes the kind of fact (used by Builder classification).
 type ContentType string
 
@@ -84,6 +94,9 @@ type MemoryNode struct {
 	Salience      Salience        `json:"salience"`
 	EmotionalTone string          `json:"emotional_tone"`
 
+	// Tier is the storage tier: "core" (always-inject) or "normal" (recall-gated).
+	Tier          NodeTier        `json:"tier,omitempty"`
+
 	State         NodeState       `json:"state"`
 	Weight        float64         `json:"weight"`
 	SourceTrust   float64         `json:"source_trust"`
@@ -130,6 +143,8 @@ type CreateNodeInput struct {
 	Type          MemoryType
 	Salience      Salience
 	EmotionalTone string
+
+	Tier          NodeTier
 
 	SourceTrust   float64
 	Weight        float64

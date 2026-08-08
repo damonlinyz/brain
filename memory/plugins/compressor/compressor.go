@@ -119,6 +119,9 @@ func (p *Plugin) Compress(ctx context.Context, in CompressInput) types.Compresse
 			NodeID:    parseNodeID(c.NodeID),
 			Summary:   c.Summary,
 			Relevance: c.Score,
+			Source:    c.Source,
+			Detail:    c.Detail,
+			Tier:      c.Tier,
 		})
 		sources = append(sources, c.Source)
 		used += cost

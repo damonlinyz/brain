@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func (s *fakeStore) CreateNode(ctx context.Context, in types.CreateNodeInput) (t
 		Content: in.Content, Summary: in.Summary, ContentType: in.ContentType,
 		Keywords: in.Keywords, Source: in.Source, Type: in.Type, Salience: in.Salience,
 		EmotionalTone: in.EmotionalTone, Weight: in.Weight, SourceTrust: in.SourceTrust,
-		State: types.NodeStateActive, Version: 1,
+		Tier:   in.Tier,
+		State:  types.NodeStateActive, Version: 1,
 		CreatedAt: now, UpdatedAt: now, LastAccessAt: now,
 	}
 	s.nodes[id] = n
@@ -91,8 +93,44 @@ func (s *fakeStore) RecordHistory(_ context.Context, h types.MemoryNodeHistory) 
 	return nil
 }
 
-func (s *fakeStore) ListNodes(context.Context, store.SearchFilter) (store.SearchResults, error) {
-	return store.SearchResults{}, nil
+func (s *fakeStore) ListNodes(_ context.Context, f store.SearchFilter) (store.SearchResults, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var items []types.MemoryNode
+	for _, n := range s.nodes {
+		if n.UserID != f.UserID {
+			continue
+		}
+		if len(f.Tiers) > 0 {
+			match := false
+			for _, t := range f.Tiers {
+				if n.Tier == t {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		if len(f.States) > 0 {
+			match := false
+			for _, st := range f.States {
+				if n.State == st {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		items = append(items, n)
+	}
+	if f.Limit > 0 && len(items) > f.Limit {
+		items = items[:f.Limit]
+	}
+	return store.SearchResults{Items: items}, nil
 }
 
 func (s *fakeStore) SearchSimilar(ctx context.Context, q store.SimilarQuery) ([]store.SimilarResult, error) {
@@ -459,3 +497,77 @@ func (s *simStore) SearchHybrid(ctx context.Context, q store.SimilarQuery, kw []
 	return s.SearchSimilar(ctx, q)
 }
 func (s *simStore) WithTx(context.Context) (store.IMemoryStore, error) { return s, nil }
+
+// --- [#2 pinned-core tier] tests ---
+
+func TestSetTier_PinsNode(t *testing.T) {
+	h := newTestHub(t)
+	fake := h.store.(*fakeStore)
+	uid := uuid.New()
+
+	nodeID := uuid.New()
+	fake.nodes[nodeID] = types.MemoryNode{
+		ID: nodeID, UserID: uid, Version: 1, State: types.NodeStateActive,
+		Tier: types.NodeTierNormal, Summary: "name: Damon",
+	}
+
+	if err := h.SetTier(context.Background(), nodeID, types.NodeTierCore); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.GetNode(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tier != types.NodeTierCore {
+		t.Fatalf("expected tier core, got %q", got.Tier)
+	}
+	// Optimistic-lock bump.
+	if got.Version != 2 {
+		t.Fatalf("expected version bump to 2, got %d", got.Version)
+	}
+}
+
+func TestSetTier_RejectsInvalidTier(t *testing.T) {
+	h := newTestHub(t)
+	if err := h.SetTier(context.Background(), uuid.New(), "bogus"); err == nil {
+		t.Fatal("expected error for invalid tier")
+	}
+}
+
+func TestInjectCore_PrependsPinnedNodes(t *testing.T) {
+	h := newTestHub(t)
+	fake := h.store.(*fakeStore)
+	uid := uuid.New()
+
+	// Seed a core node directly into the fake store.
+	coreID := uuid.New()
+	fake.nodes[coreID] = types.MemoryNode{
+		ID: coreID, UserID: uid, Tier: types.NodeTierCore,
+		State: types.NodeStateActive, Summary: "name: Damon", Version: 1,
+	}
+	// And a normal node that should NOT be injected as core.
+	normalID := uuid.New()
+	fake.nodes[normalID] = types.MemoryNode{
+		ID: normalID, UserID: uid, Tier: types.NodeTierNormal,
+		State: types.NodeStateActive, Summary: "likes pizza", Version: 1,
+	}
+
+	cc := types.CompressedContext{Memories: []types.MemoryRef{
+		{Summary: "recall-gated hit", Source: "vector"},
+	}}
+	h.injectCore(context.Background(), uid, &cc)
+
+	if len(cc.Memories) != 2 {
+		t.Fatalf("expected 2 memories (1 core + 1 existing), got %d", len(cc.Memories))
+	}
+	head := cc.Memories[0]
+	if head.Source != "core" || head.Tier != "core" || head.Summary != "name: Damon" {
+		t.Fatalf("core node not prepended correctly: %+v", head)
+	}
+	if !strings.Contains(cc.SystemPrompt, "Core (always-on)") {
+		t.Fatalf("system prompt missing core block: %q", cc.SystemPrompt)
+	}
+	if strings.Contains(cc.SystemPrompt, "likes pizza") {
+		t.Fatalf("normal node leaked into core block: %q", cc.SystemPrompt)
+	}
+}

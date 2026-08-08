@@ -72,10 +72,15 @@ type SimilarityReport struct {
 
 // TriggerCandidate is one memory recalled by Trigger for current context.
 type TriggerCandidate struct {
-	NodeID    string
-	Summary   string
-	Score     float64
-	Source    string // vector / keyword / graph / hybrid
+	NodeID  string
+	Summary string
+	Score   float64
+	Source  string // vector / keyword / graph / hybrid / core
+	// Detail carries provenance colour — e.g. the edge kind for graph neighbours
+	// ("similar"/"causal"), propagated through the compressor into MemoryRef.Detail.
+	Detail string
+	// Tier lets the compressor mark core-tier (always-inject) candidates.
+	Tier string
 }
 
 // ForgettingAction is the Forgetting plugin's verdict on a node.

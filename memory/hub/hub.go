@@ -9,6 +9,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -575,6 +576,7 @@ func (h *Hub) Recall(ctx context.Context, in RecallInput) (types.CompressedConte
 					Summary: gn.Node.Summary,
 					Score:   0.5 * gn.Edge.Weight, // graph relevance, damped
 					Source:  "graph",
+					Detail:  string(gn.Edge.EdgeType), // provenance: edge kind
 				})
 			}
 			h.logger.Debug("v2 recall: graph neighbors enriched", "neighbors", len(neighbors), "candidates", len(candidates))
@@ -586,7 +588,55 @@ func (h *Hub) Recall(ctx context.Context, in RecallInput) (types.CompressedConte
 		DesiredBudget: in.DesiredBudget,
 	})
 	cc.LiveInjectOK = liveInjectOK
+
+	// [#2 pinned-core tier] Always-inject the owner's core-tier nodes. These
+	// bypass similarity scoring — foundational facts pinned as always-on context.
+	// They are prepended so they sit at the top of the prompt. Capped to keep the
+	// slice bounded; errors are best-effort (a missing core fetch must not break recall).
+	h.injectCore(ctx, in.UserID, &cc)
+
 	return cc, nil
+}
+
+// injectCore prepends the owner's core-tier nodes to a CompressedContext. It is
+// best-effort: any store error is logged and swallowed so recall never fails on
+// the core fetch. Core nodes get Source="core", Tier="core".
+func (h *Hub) injectCore(ctx context.Context, userID uuid.UUID, cc *types.CompressedContext) {
+	results, err := h.store.ListNodes(ctx, store.SearchFilter{
+		UserID: userID,
+		Tiers:  []types.NodeTier{types.NodeTierCore},
+		States: []types.NodeState{types.NodeStateActive},
+		Limit:  10,
+	})
+	if err != nil {
+		h.logger.Debug("v2 recall: core fetch failed (skipped)", "err", err)
+		return
+	}
+	if len(results.Items) == 0 {
+		return
+	}
+	refs := make([]types.MemoryRef, 0, len(results.Items))
+	var block strings.Builder
+	block.WriteString("\n## Core (always-on)\n")
+	for _, n := range results.Items {
+		refs = append(refs, types.MemoryRef{
+			NodeID:    n.ID,
+			Summary:   n.Summary,
+			Relevance: 1.0,
+			Source:    "core",
+			Detail:    "pinned",
+			Tier:      "core",
+		})
+		block.WriteString("- " + n.Summary + "\n")
+	}
+	// Prepend core refs + prompt block so core sits above recall-gated memories.
+	cc.Memories = append(refs, cc.Memories...)
+	cc.Sources = append(make([]string, len(refs)), cc.Sources...)
+	for i := range refs {
+		cc.Sources[i] = "core"
+	}
+	cc.SystemPrompt += block.String()
+	h.logger.Debug("v2 recall: core injected", "core", len(refs))
 }
 
 // markRecalledUnstable opens a reconsolidation window on every surfaced node,
@@ -656,6 +706,25 @@ func (h *Hub) Reinforce(ctx context.Context, nodeID uuid.UUID, intensity float64
 		n.Weight = newWeight
 		n.AccessCount = n.AccessCount + 1
 		n.LastAccessAt = h.now()
+	})
+	return err
+}
+
+// SetTier pins (core) or unpins (normal) a node. Core-tier nodes are always
+// injected by Recall regardless of similarity score. [#2 pinned-core tier]
+func (h *Hub) SetTier(ctx context.Context, nodeID uuid.UUID, tier types.NodeTier) error {
+	if h.store == nil {
+		return ErrNotConfigured
+	}
+	if tier != types.NodeTierCore && tier != types.NodeTierNormal {
+		return fmt.Errorf("hub: invalid tier %q", tier)
+	}
+	node, err := h.store.GetNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	_, err = h.store.UpdateNode(ctx, nodeID, node.Version, func(n *types.MemoryNode) {
+		n.Tier = tier
 	})
 	return err
 }

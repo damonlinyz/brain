@@ -51,6 +51,12 @@ func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// [#1 readable layer] ?format=markdown renders a human-readable view.
+	if r.URL.Query().Get("format") == "markdown" {
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Write([]byte(cc.Markdown()))
+		return
+	}
 	json.NewEncoder(w).Encode(cc)
 }
 
@@ -121,8 +127,9 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	case http.MethodPost:
-		// /nodes/{id}/correct
-		if len(parts) > 1 && parts[1] == "correct" {
+		// /nodes/{id}/correct | /nodes/{id}/pin | /nodes/{id}/unpin
+		switch {
+		case len(parts) > 1 && parts[1] == "correct":
 			var body struct {
 				Content string `json:"content"`
 				Summary string `json:"summary"`
@@ -139,7 +146,20 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			json.NewEncoder(w).Encode(n)
-		} else {
+		case len(parts) > 1 && parts[1] == "pin":
+			// [#2 pinned-core tier] mark a node as always-inject core.
+			if err := s.hub.SetTier(r.Context(), id, types.NodeTierCore); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"tier": "core"})
+		case len(parts) > 1 && parts[1] == "unpin":
+			if err := s.hub.SetTier(r.Context(), id, types.NodeTierNormal); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"tier": "normal"})
+		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
 	default:

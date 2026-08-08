@@ -106,6 +106,50 @@ curl -s http://localhost:8090/health
 # → 返回空 200
 ```
 
+## 四（补）、记忆 API
+
+`brain serve` 除了做 LLM 网关，还直接暴露记忆 CRUD（带 `Authorization: Bearer <BRAIN_TOKEN>`）：
+
+```bash
+# 写入一条记忆
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"raw_text":"我叫 Damon，喜欢深色主题"}' \
+     http://localhost:8090/api/v1/memory/ingest
+
+# 召回（JSON，每条记忆带来源 provenance：vector/keyword/graph/core）
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" \
+     "http://localhost:8090/api/v1/memory/recall?query=主题偏好"
+
+# 召回的人类可读 Markdown 视图（#1 readable layer）
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" \
+     "http://localhost:8090/api/v1/memory/recall?query=主题偏好&format=markdown"
+
+# 记忆总览（Markdown）
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" \
+     http://localhost:8090/api/v1/memory/index
+
+# 列出 / 查看 / 删除单条记忆
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" http://localhost:8090/api/v1/memory/nodes
+curl -s -H "Authorization: Bearer $BRAIN_TOKEN" http://localhost:8090/api/v1/memory/nodes/<id>
+curl -X DELETE -H "Authorization: Bearer $BRAIN_TOKEN" http://localhost:8090/api/v1/memory/nodes/<id>
+
+# 修正一条记错的记忆
+curl -s -X POST -H "Authorization: Bearer $BRAIN_TOKEN" -H "Content-Type: application/json" \
+     -d '{"content":"我叫 Lin","summary":"名字是 Lin","reason":"之前记错了"}' \
+     http://localhost:8090/api/v1/memory/nodes/<id>/correct
+
+# 钉住 / 取消钉住 —— pinned-core 永远注入（#2，像个人 CLAUDE.md）
+curl -s -X POST -H "Authorization: Bearer $BRAIN_TOKEN" \
+     http://localhost:8090/api/v1/memory/nodes/<id>/pin
+curl -s -X POST -H "Authorization: Bearer $BRAIN_TOKEN" \
+     http://localhost:8090/api/v1/memory/nodes/<id>/unpin
+```
+
+> **pinned-core（#2）**：被 `pin` 的记忆会标成 `tier=core`，每次召回**无视相似度分数**直接注入，放在 prompt 最前面的 `## Core` 区块。适合放「用户名 / 核心偏好 / 长期目标」这类必须永远在线的事实。
+>
+> **recall explain（#4）**：召回结果里每条记忆都带 `source`（来源）和 `detail`（如 graph 的边类型），配合 `format=markdown` 能直观看到「这条记忆为什么被想起来」。
+
 ## 五、配置你的 CLI
 
 ### 5.1 生成 CLI 的接入配置

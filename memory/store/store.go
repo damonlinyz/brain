@@ -24,6 +24,7 @@ type SearchFilter struct {
 	Types     []types.MemoryType
 	States    []types.NodeState
 	Sources   []types.Source
+	Tiers     []types.NodeTier // filter by storage tier (core/normal)
 	Since     *time.Time
 	Until     *time.Time
 	SessionID *uuid.UUID
